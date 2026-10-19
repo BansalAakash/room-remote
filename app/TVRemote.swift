@@ -2767,7 +2767,7 @@ struct DayBar: View {
             }
             .frame(height: 18)
             HStack {
-                ForEach(Array(["12a", "6a", "12p", "6p", "12a"].enumerated()), id: \.offset) { index, mark in
+                ForEach(Array(["0", "6", "12", "18", "24"].enumerated()), id: \.offset) { index, mark in
                     Text(mark).font(.system(size: 10)).foregroundStyle(Theme.secondary)
                     if index < 4 { Spacer() }
                 }
