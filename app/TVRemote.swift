@@ -2272,7 +2272,7 @@ struct PlugView: View {
         let day = PlugSchedule.today(model.timers, now: now, inching: model.inching)
         let upcoming = PlugSchedule.next(model.timers, after: now)
         return ZStack {
-            DayClock(timers: model.timers, segments: day.segments, now: now, selection: section,
+            DayClock(timers: model.timers, segments: day.segments, now: now, inching: model.inching, selection: section,
                      pick: { fraction, fromDot in
                          sectionArmed = false
                          guard fraction >= 0 else { section = nil; return }
@@ -2617,12 +2617,18 @@ struct DayClock: View {
     let timers: [PlugTimer]
     let segments: [PlugSchedule.Segment]
     let now: Date
+    let inching: Int
     let selection: PlugSection?
     let pick: (Double, Bool) -> Void
 
     private func fraction(_ time: String) -> Double {
         let parts = time.split(separator: ":").compactMap { Double($0) }
         return parts.count == 2 ? (parts[0] * 60 + parts[1]) / 1440 : 0
+    }
+
+    private func dot(_ color: Color, size: CGFloat) -> some View {
+        Circle().fill(color).frame(width: size, height: size)
+            .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 2))
     }
 
     private func point(_ fraction: Double, radius: Double, center: CGPoint) -> CGPoint {
@@ -2656,11 +2662,18 @@ struct DayClock: View {
                     path.addLine(to: point(nowFraction, radius: radius + 11, center: center))
                 }
                 .stroke(Color.primary, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                // A plug with an auto-off (inching) ends each stretch by itself: mark where, with a red dot.
+                if inching > 0 {
+                    ForEach(timers.filter(\.on)) { timer in
+                        dot(Theme.red.opacity(timer.enabled ? 1 : 0.4), size: 12)
+                            .position(point(fraction(timer.time) + Double(inching) / 86400, radius: radius, center: center))
+                            .onTapGesture { pick(fraction(timer.time) + 0.0002, true) }
+                            .accessibilityLabel("\(timer.time) plus \(inching / 60) minutes, turns off")
+                    }
+                }
                 ForEach(timers) { timer in
                     Button { pick(fraction(timer.time) + 0.0002, true) } label: {
-                        Circle().fill(timer.enabled ? (timer.on ? Color(nsColor: .systemGreen) : Theme.red) : Theme.grey)
-                            .frame(width: 16, height: 16)
-                            .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 2))
+                        dot(timer.enabled ? (timer.on ? Color(nsColor: .systemGreen) : Theme.red) : Theme.grey, size: inching > 0 ? 12 : 16)
                             .frame(width: 28, height: 28).contentShape(Circle())
                     }
                     .buttonStyle(.plain)
