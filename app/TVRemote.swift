@@ -2206,7 +2206,7 @@ struct PlugView: View {
                         VStack(spacing: 6) {
                             clock(now: context.date)
                             DayBar(segments: PlugSchedule.today(model.timers, now: context.date, inching: model.inching).segments,
-                                   selection: section, now: context.date, half: half) { handlePick($0, fromDot: false) }
+                                   selection: section, now: context.date) { handlePick($0, fromDot: false) }
                         }
                     }
                 } else {
@@ -2737,12 +2737,11 @@ struct DayClock: View {
     }
 }
 
-/// The whole day as one thin bar (midnight at the left): lit while the plug is on. The outlined half is what the dial shows.
+/// The whole day as one thin bar (midnight at the left): lit while the plug is on.
 struct DayBar: View {
     let segments: [PlugSchedule.Segment]
     let selection: PlugSection?
     let now: Date
-    let half: Int
     let pick: (Double) -> Void
 
     var body: some View {
@@ -2760,8 +2759,6 @@ struct DayBar: View {
                         RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: .systemGreen).opacity(0.85))
                             .frame(width: max(4, (segment.to - segment.from) * width), height: 10).offset(x: segment.from * width)
                     }
-                    RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.4), lineWidth: 1)
-                        .frame(width: width / 2, height: 16).offset(x: Double(half) * width / 2)
                     Rectangle().fill(Color.primary).frame(width: 2, height: 16).offset(x: width * nowDay - 1)
                 }
                 .frame(maxHeight: .infinity)
