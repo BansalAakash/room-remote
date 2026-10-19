@@ -294,6 +294,17 @@ def add_device_main(args):
     print(json.dumps({"ok": True, "name": name, "ip": ip}))
 
 
+def remove_device_main(args):
+    """room.py remove-device <name>: forgets a plug in this app. It stays on the Smart Life account."""
+    path = os.path.join(HERE, "devices.json")
+    devices = json.load(open(path)) if os.path.exists(path) else {}
+    if not args or args[0] not in devices:
+        sys.exit("error: no such plug")
+    del devices[args[0]]
+    write_private(path, devices)
+    print(json.dumps({"ok": True, "removed": args[0]}))
+
+
 def import_main(args):
     """room.py import [wizard-folder]: turn the output of `python -m tinytuya wizard` (run in that folder) into devices.json."""
     import re
@@ -331,7 +342,7 @@ def import_main(args):
 
 
 def main(argv):
-    devices = load() if argv and argv[0] not in ("import", "login-start", "login-poll", "discover", "add-device") else {}
+    devices = load() if argv and argv[0] not in ("import", "login-start", "login-poll", "discover", "add-device", "remove-device") else {}
     if argv and argv[0] == "import":
         return import_main(argv[1:])
     if argv and argv[0] == "login-start":
@@ -342,6 +353,8 @@ def main(argv):
         return discover_main()
     if argv and argv[0] == "add-device":
         return add_device_main(argv[1:])
+    if argv and argv[0] == "remove-device":
+        return remove_device_main(argv[1:])
     if not argv or argv[0] == "list":
         for n, d in devices.items():
             print(f"{n}\t{d['ip']}\t{d.get('product', '')}")

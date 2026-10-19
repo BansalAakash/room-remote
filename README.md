@@ -42,6 +42,8 @@ Plugs must first be added in the **Smart Life** (or Tuya Smart) phone app. Then,
 3. A QR code appears. In Smart Life tap the scan icon (top right of Home), scan it and approve the sign-in.
 4. Your Smart Life devices are listed. Tap **Add** on each plug you want. They need to be on, and your Mac on the same Wi-Fi, so the app can find them.
 
+To remove a plug later, open the plug picker and choose **Remove …**. It only disappears from this app; it stays in Smart Life.
+
 That is all. This uses Tuya's device-sharing sign-in (the same one Home Assistant uses), so you don't need a developer account. It gives the app each plug's local key; nothing else about your account is stored. You can revoke access any time in Smart Life.
 
 Plugs added this way support on/off, timed holds ("on for 30 min, then off") and the power-cut setting. **Schedules and switching history** also need a Tuya developer key (below). Without one, the Plugs tab says so and hides them.
@@ -75,6 +77,7 @@ cd ~/Library/Application\ Support/RoomRemote/room
 .venv/bin/python room.py log <plug> [hours] [--all]       # switching history
 .venv/bin/python room.py discover                         # devices on your signed-in Smart Life account (after the in-app sign-in)
 .venv/bin/python room.py add-device <device-id> [title]   # save one to devices.json
+.venv/bin/python room.py remove-device <plug>             # forget one (it stays in Smart Life)
 ```
 
 The optional seven digits are the days, Sunday first.

@@ -2166,6 +2166,7 @@ struct PlugView: View {
     @Binding var device: PlugDevice
     let devices: [PlugDevice]
     let onAdd: () -> Void
+    let onRemove: (PlugDevice) -> Void
     @ObservedObject var model: PlugModel
     @State private var armed = false
     @State private var armedHold: Int?
@@ -2173,6 +2174,7 @@ struct PlugView: View {
     @State private var deleteArmed: String?
     @State private var section: PlugSection?
     @State private var showLog = false
+    @State private var confirmRemove = false
     @State private var sectionArmed = false
 
     private static let holds = [(label: "30 min", seconds: 1800), (label: "1 h", seconds: 3600), (label: "2 h", seconds: 7200), (label: "4 h", seconds: 14400)]
@@ -2183,7 +2185,9 @@ struct PlugView: View {
     var body: some View {
         VStack(spacing: 12) {
             controlRow.padding(.top, 12)
-            if editing != nil {
+            if confirmRemove {
+                removeConfirm
+            } else if editing != nil {
                 editor
             } else if showLog {
                 logView
@@ -2210,6 +2214,7 @@ struct PlugView: View {
                 ForEach(devices) { item in Button(item.title) { device = item } }
                 Divider()
                 Button("Add a plug…") { onAdd() }
+                Button("Remove \(device.title)…") { confirmRemove = true }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: device.symbol).font(.system(size: 13))
@@ -2374,6 +2379,30 @@ struct PlugView: View {
         }
         armedHold = nil
         Task { await model.hold(device.holdOn, seconds: seconds) }
+    }
+
+    // MARK: Remove
+
+    private var removeConfirm: some View {
+        VStack(spacing: 10) {
+            Spacer()
+            Image(systemName: "minus.circle").font(.system(size: 28, weight: .light)).foregroundStyle(Theme.secondary)
+            Text("Remove \(device.title)?").font(.system(size: 15, weight: .semibold, design: .rounded))
+            Text("It disappears from this app only. It stays in Smart Life, and you can add it again any time.")
+                .font(.system(size: 12)).foregroundStyle(Theme.secondary).multilineTextAlignment(.center).padding(.horizontal, 12)
+            HStack(spacing: 10) {
+                Button { confirmRemove = false } label: {
+                    Text("Cancel").font(.system(size: 13, weight: .semibold, design: .rounded)).frame(maxWidth: .infinity, minHeight: 32)
+                }
+                .buttonStyle(KeyStyle(shape: Capsule(), fill: Theme.keyFill, hover: Theme.strong))
+                Button { confirmRemove = false; onRemove(device) } label: {
+                    Text("Remove").font(.system(size: 13, weight: .semibold, design: .rounded)).foregroundStyle(Theme.red).frame(maxWidth: .infinity, minHeight: 32)
+                }
+                .buttonStyle(KeyStyle(shape: Capsule(), fill: Theme.keyFill, hover: Theme.strong))
+            }
+            .padding(.top, 6)
+            Spacer()
+        }
     }
 
     // MARK: History
@@ -2711,6 +2740,13 @@ struct RootView: View {
                 } else {
                     let device = plugs.device(plugID)
                     PlugView(device: Binding(get: { device }, set: { plugID = $0.id }), devices: plugs.devices, onAdd: { showSetup = true },
+                             onRemove: { removed in
+                                 Task {
+                                     _ = await RoomScript.call(["remove-device", removed.id])
+                                     plugID = ""
+                                     plugs.reload()
+                                 }
+                             },
                              model: plugs.model(device.id)).id(device.id)
                 }
             }
