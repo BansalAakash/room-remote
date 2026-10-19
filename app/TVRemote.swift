@@ -2300,13 +2300,6 @@ struct PlugView: View {
         if section == nil { editing = TimerDraft(roundedTo: fraction) }
     }
 
-    private func upcomingTitle(_ timer: PlugTimer) -> String {
-        guard timer.on, model.inching > 0, let start = TimerDraft.format.date(from: timer.time) else {
-            return "\(timer.on ? "On" : "Off") at \(TimerDraft.twelve(timer.time))"
-        }
-        return "On \(TimerDraft.twelve(timer.time)) to \(TimerDraft.twelve(TimerDraft.format.string(from: start.addingTimeInterval(Double(model.inching)))))"
-    }
-
     private func clock(now: Date) -> some View {
         let day = PlugSchedule.today(model.timers, now: now, inching: model.inching)
         let upcoming = PlugSchedule.next(model.timers, after: now)
@@ -2320,8 +2313,9 @@ struct PlugView: View {
                     Text(model.on == true ? "Turns off" : "Back on").font(.system(size: 14, weight: .medium))
                     Text("in \(PlugSchedule.duration(left))").font(.system(size: 12)).foregroundStyle(Theme.secondary)
                 } else if let upcoming {
-                    Text(upcomingTitle(upcoming.timer)).font(.system(size: 14, weight: .medium))
-                    Text("in \(PlugSchedule.duration(upcoming.at.timeIntervalSince(now)))").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                    Text("\(upcoming.timer.on ? "On" : "Off") in \(PlugSchedule.duration(upcoming.at.timeIntervalSince(now)))").font(.system(size: 14, weight: .medium))
+                    Text(upcoming.timer.on && model.inching > 0 ? "for \(PlugSchedule.duration(Double(model.inching)))" : "at \(TimerDraft.twelve(upcoming.timer.time))")
+                        .font(.system(size: 12)).foregroundStyle(Theme.secondary)
                 } else {
                     Text(model.timersLoaded ? "No schedule" : "Loading").font(.system(size: 13)).foregroundStyle(Theme.secondary)
                 }
@@ -2367,7 +2361,9 @@ struct PlugView: View {
     private func sectionRow(_ section: PlugSection) -> some View {
         let both = section.start.group != section.end.group
         return VStack(spacing: 8) {
-            Text("\(TimerDraft.twelve(section.start.time)) to \(TimerDraft.twelve(endText(section)))").font(.system(size: 14, weight: .medium))
+            Text(both ? "\(TimerDraft.twelve(section.start.time)) to \(TimerDraft.twelve(section.end.time))"
+                      : "\(TimerDraft.twelve(section.start.time))\(model.inching > 0 ? " for \(PlugSchedule.duration(Double(model.inching)))" : "")")
+                .font(.system(size: 14, weight: .medium))
             HStack(spacing: 8) {
                 Button { self.section = nil; sectionArmed = false } label: {
                     Text("Cancel").font(.system(size: 13, weight: .semibold, design: .rounded)).frame(maxWidth: .infinity, minHeight: 30)
@@ -2385,13 +2381,6 @@ struct PlugView: View {
                 .disabled(model.timerBusy)
             }
         }
-    }
-
-    /// A lone schedule's stretch ends when the plug's own auto-off fires.
-    private func endText(_ section: PlugSection) -> String {
-        guard section.start.group == section.end.group, model.inching > 0,
-              let start = TimerDraft.format.date(from: section.start.time) else { return section.end.time }
-        return TimerDraft.format.string(from: start.addingTimeInterval(Double(model.inching)))
     }
 
     private func deleteSection(_ section: PlugSection) {
