@@ -105,6 +105,8 @@ TIMER_CATEGORY = "category_power"
 
 def cloud():
     os.chdir(HERE)  # tinytuya.json (cloud keys) lives next to this file
+    if not os.path.exists(os.path.join(HERE, "tinytuya.json")):
+        sys.exit("error: no cloud keys. Schedules and history need a Tuya developer project (see the README).")
     return tinytuya.Cloud()
 
 
@@ -201,6 +203,97 @@ def log_main(name, args, dev):
             print(f"{e['time']}  {e['code']:<14} {e['value']}")
 
 
+# --- Adding plugs without a developer account: sign in by scanning a QR code with the Smart Life app (Tuya's device-sharing login).
+SHARING_CLIENT_ID, SHARING_SCHEMA = "HA_3y9q4ak7g4ephrvke", "haauthorize"
+LOGIN_FILE, SESSION_FILE = os.path.join(HERE, ".login.json"), os.path.join(HERE, "tuya_session.json")
+
+
+def write_private(path, data):
+    with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def login_start(args):
+    """room.py login-start <user-code>: prints the text to show as a QR code. The user code is in Smart Life: Me, Settings, Account and Security."""
+    from tuya_sharing import LoginControl
+    if not args:
+        sys.exit("usage: room.py login-start <user-code>")
+    r = LoginControl().qr_code(SHARING_CLIENT_ID, SHARING_SCHEMA, args[0].strip())
+    if not r.get("success"):
+        sys.exit("error: that user code was not accepted. Check it in Smart Life and try again.")
+    token = r["result"]["qrcode"]
+    write_private(LOGIN_FILE, {"user_code": args[0].strip(), "token": token})
+    print(json.dumps({"qr": f"tuyaSmart--qrLogin?token={token}"}))
+
+
+def login_poll():
+    """room.py login-poll: {"status": "waiting"} until the QR code has been scanned and approved, then {"status": "ok"}."""
+    from tuya_sharing import LoginControl
+    if not os.path.exists(LOGIN_FILE):
+        sys.exit("error: start the sign-in first")
+    pending = json.load(open(LOGIN_FILE))
+    ok, result = LoginControl().login_result(pending["token"], SHARING_CLIENT_ID, pending["user_code"])
+    if not ok:
+        print(json.dumps({"status": "waiting"}))
+        return
+    write_private(SESSION_FILE, {
+        "user_code": pending["user_code"], "terminal_id": result["terminal_id"], "endpoint": result["endpoint"],
+        "token": {k: result[k] for k in ("t", "uid", "expire_time", "access_token", "refresh_token")}})
+    os.remove(LOGIN_FILE)
+    print(json.dumps({"status": "ok"}))
+
+
+def sharing_manager():
+    from tuya_sharing import Manager
+    if not os.path.exists(SESSION_FILE):
+        sys.exit("error: not signed in")
+    session = json.load(open(SESSION_FILE))
+    manager = Manager(SHARING_CLIENT_ID, session["user_code"], session["terminal_id"], session["endpoint"], session["token"])
+    try:
+        manager.update_device_cache()
+    except Exception:
+        sys.exit("error: the sign-in expired. Sign in again.")
+    return manager
+
+
+def slug(text):
+    import re
+    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_") or "plug"
+
+
+def discover_main():
+    """room.py discover: the devices on the signed-in Smart Life account (never prints keys)."""
+    manager = sharing_manager()
+    have = {d["id"] for d in (json.load(open(os.path.join(HERE, "devices.json"))) if os.path.exists(os.path.join(HERE, "devices.json")) else {}).values()}
+    devices = [{"id": d.id, "name": d.name, "product": d.product_name, "category": d.category, "online": bool(d.online), "added": d.id in have}
+               for d in manager.device_map.values() if not d.sub]
+    print(json.dumps({"devices": devices}))
+
+
+def add_device_main(args):
+    """room.py add-device <id> [title]: finds the plug on this network and saves it, with its local key, to devices.json."""
+    manager = sharing_manager()
+    device = manager.device_map.get(args[0]) if args else None
+    if not device:
+        sys.exit("error: no such device on the account")
+    found = {v.get("gwId"): (ip, v.get("version")) for ip, v in tinytuya.deviceScan(False, 20).items()}
+    if device.id not in found:
+        sys.exit("error: can't see that plug on this network. Is it on, and is this Mac on the same Wi-Fi?")
+    ip, version = found[device.id]
+    path = os.path.join(HERE, "devices.json")
+    devices = json.load(open(path)) if os.path.exists(path) else {}
+    title = " ".join(args[1:]) or device.name
+    name, n = slug(title), 2
+    while name in devices and devices[name]["id"] != device.id:
+        name, n = f"{slug(title)}_{n}", n + 1
+    entry = {"id": device.id, "key": device.local_key, "ip": ip, "title": title}
+    if str(version) != "3.3":
+        entry["version"] = float(version)
+    devices[name] = entry
+    write_private(path, devices)
+    print(json.dumps({"ok": True, "name": name, "ip": ip}))
+
+
 def import_main(args):
     """room.py import [wizard-folder]: turn the output of `python -m tinytuya wizard` (run in that folder) into devices.json."""
     import re
@@ -238,9 +331,17 @@ def import_main(args):
 
 
 def main(argv):
-    devices = load() if argv and argv[0] != "import" else {}
+    devices = load() if argv and argv[0] not in ("import", "login-start", "login-poll", "discover", "add-device") else {}
     if argv and argv[0] == "import":
         return import_main(argv[1:])
+    if argv and argv[0] == "login-start":
+        return login_start(argv[1:])
+    if argv and argv[0] == "login-poll":
+        return login_poll()
+    if argv and argv[0] == "discover":
+        return discover_main()
+    if argv and argv[0] == "add-device":
+        return add_device_main(argv[1:])
     if not argv or argv[0] == "list":
         for n, d in devices.items():
             print(f"{n}\t{d['ip']}\t{d.get('product', '')}")
@@ -263,7 +364,8 @@ def main(argv):
     dps = local(cmd, argv, devices[name]) or via_cloud(cmd, argv, devices[name])
     on = bool(dps.get("1"))
     if "--json" in argv:
-        print(json.dumps({"name": name, "on": on, "countdown": dps.get("9", 0), "relay": dps.get("38"), "inching": inching_seconds(dps.get("44"))}))
+        print(json.dumps({"name": name, "on": on, "countdown": dps.get("9", 0), "relay": dps.get("38"), "inching": inching_seconds(dps.get("44")),
+                          "cloud": os.path.exists(os.path.join(HERE, "tinytuya.json"))}))
     else:
         print(f"{name}: {'on' if on else 'off'}")
 

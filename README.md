@@ -33,33 +33,33 @@ Turn the TV on, find its IP address (Settings, Network), then run:
 
 Type the code the TV shows. You only do this once. Optional: enable ADB debugging on the TV (Developer options) for faster app launching and screenshots.
 
-## Set up your plugs
+## Add your plugs
 
-Plugs must first be added in the **Smart Life** (or Tuya Smart) phone app. Then:
+Plugs must first be added in the **Smart Life** (or Tuya Smart) phone app. Then, in this app:
 
-1. Create a free account at [iot.tuya.com](https://iot.tuya.com) and a **Cloud** project (pick the data center for your region). In the project, open **Devices, Link App Account** and scan the QR code with the Smart Life app, so your plugs appear under the project. Note the project's **Access ID** and **Access Secret**.
-2. Run Tuya's setup wizard in a scratch folder. It asks for the Access ID, Access Secret, one device ID (from the project's device list) and your region, and it saves your plugs' local keys:
+1. Open the **Plugs** tab and choose **Add a plug** (or **Add a plug…** in the plug picker).
+2. In Smart Life, open **Me, the settings gear, Account and Security, User Code** and type that code into the app.
+3. A QR code appears. In Smart Life tap the scan icon (top right of Home), scan it and approve the sign-in.
+4. Your Smart Life devices are listed. Tap **Add** on each plug you want. They need to be on, and your Mac on the same Wi-Fi, so the app can find them.
 
-   ```bash
-   cd ~/Library/Application\ Support/RoomRemote/room
-   mkdir -p wizard && cd wizard
-   ../.venv/bin/python -m tinytuya wizard
-   ```
+That is all. This uses Tuya's device-sharing sign-in (the same one Home Assistant uses), so you don't need a developer account. It gives the app each plug's local key; nothing else about your account is stored. You can revoke access any time in Smart Life.
 
-   Answer **Y** when it offers to scan the network.
-3. Import the result:
+Plugs added this way support on/off, timed holds ("on for 30 min, then off") and the power-cut setting. **Schedules and switching history** also need a Tuya developer key (below). Without one, the Plugs tab says so and hides them.
 
-   ```bash
-   cd ~/Library/Application\ Support/RoomRemote/room
-   .venv/bin/python room.py import
-   ```
+### Optional: schedules and history
 
-   This writes `devices.json`. Edit it to give a plug a nicer `"title"` or a `"symbol"` (an SF Symbol name). A plug whose name contains "fridge" or "freezer" asks for confirmation before it is switched off and uses "pause, then back on" for timed holds.
-4. Restart the app. Your plugs appear in the Plugs tab.
+Create a free account at [iot.tuya.com](https://iot.tuya.com) and a **Cloud** project (pick the data center for your region). In the project, open **Devices, Link App Account** and scan the QR code with Smart Life. Then run the setup wizard in a scratch folder (it asks for the project's **Access ID**, **Access Secret**, one device ID and your region, and you should answer **Y** to scanning the network):
 
-Give the plugs fixed IP addresses in your router if you can; the local connection needs the address in `devices.json` to stay the same. Your Mac and the plugs need to be on the same network (and, on some routers, the same Wi-Fi band).
+```bash
+cd ~/Library/Application\ Support/RoomRemote/room
+mkdir -p wizard && cd wizard
+../.venv/bin/python -m tinytuya wizard
+cd .. && .venv/bin/python room.py import
+```
 
-The free Tuya IoT Core trial has to be extended every so often (Cloud, My Services, extend). Local on/off keeps working without it; schedules, history and the cloud fallback need it.
+This also writes `devices.json`. You can edit it to give a plug a nicer `"title"` or a `"symbol"` (an SF Symbol name). A plug whose name contains "fridge" or "freezer" asks for confirmation before it is switched off and uses "pause, then back on" for timed holds. Restart the app afterwards.
+
+Give the plugs fixed IP addresses in your router if you can; the local connection needs the address in `devices.json` to stay the same. Your Mac and the plugs need to be on the same network (and, on some routers, the same Wi-Fi band). The free Tuya IoT Core trial has to be extended every so often (Cloud, My Services, extend); local switching keeps working without it.
 
 ## Command line
 
@@ -73,6 +73,8 @@ cd ~/Library/Application\ Support/RoomRemote/room
 .venv/bin/python room.py timers <plug>                    # list schedules (JSON)
 .venv/bin/python room.py timer-add <plug> HH:MM on|off [1111111]
 .venv/bin/python room.py log <plug> [hours] [--all]       # switching history
+.venv/bin/python room.py discover                         # devices on your signed-in Smart Life account (after the in-app sign-in)
+.venv/bin/python room.py add-device <device-id> [title]   # save one to devices.json
 ```
 
 The optional seven digits are the days, Sunday first.

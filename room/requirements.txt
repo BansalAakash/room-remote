@@ -1,1 +1,4 @@
 tinytuya
+tuya-device-sharing-sdk
+cryptography
+requests

@@ -4,6 +4,7 @@ import SwiftUI
 import AppKit
 import Combine
 import Carbon.HIToolbox
+import CoreImage.CIFilterBuiltins
 import ServiceManagement
 
 enum Config {
@@ -1665,9 +1666,10 @@ struct PlugDevice: Hashable, Identifiable {
 /// One PlugModel per plug, made when first shown.
 @MainActor
 final class PlugStore: ObservableObject {
-    let devices = PlugDevice.load()
+    @Published private(set) var devices = PlugDevice.load()
     private var models: [String: PlugModel] = [:]
 
+    func reload() { devices = PlugDevice.load() }
     func device(_ id: String) -> PlugDevice { devices.first { $0.id == id } ?? devices[0] }
     func model(_ id: String) -> PlugModel {
         if let model = models[id] { return model }
@@ -1753,6 +1755,8 @@ final class PlugModel: ObservableObject {
     @Published var relay: String?
     /// Seconds the plug stays on after each switch-on before turning itself off (its "inching" setting); 0 if unset.
     @Published var inching = 0
+    /// False when no Tuya developer keys are set up: schedules and history are then unavailable (switching still works).
+    @Published var cloud = true
     @Published var timers: [PlugTimer] = []
     @Published var timersLoaded = false
     @Published var timerBusy = false
@@ -1787,6 +1791,7 @@ final class PlugModel: ObservableObject {
         countdownRead = Date()
         relay = object?["relay"] as? String
         inching = object?["inching"] as? Int ?? 0
+        cloud = object?["cloud"] as? Bool ?? true
     }
 
     private func run(_ args: [String]) async {
@@ -1962,9 +1967,205 @@ struct TimerDraft {
     var loops: String { days.map { $0 ? "1" : "0" }.joined() }
 }
 
+/// Adds plugs from the user's Smart Life account: sign in by scanning a QR code, then pick the plugs to add.
+@MainActor
+final class PlugSetupModel: ObservableObject {
+    enum Step { case checking, code, waiting(String), devices }
+    struct Found: Identifiable {
+        let id: String, name: String, product: String
+        var online: Bool, added: Bool
+    }
+
+    @Published var step: Step = .checking
+    @Published var devices: [Found] = []
+    @Published var error: String?
+    @Published var busy = false
+    @Published var adding: String?
+    private var pollTask: Task<Void, Never>?
+
+    /// Already signed in? Go straight to the device list.
+    func begin() async {
+        if await loadDevices() { return }
+        step = .code
+    }
+
+    func start(code: String) async {
+        error = nil
+        busy = true
+        let object = await RoomScript.call(["login-start", code.trimmed], timeout: 30)
+        busy = false
+        guard let qr = object?["qr"] as? String else { error = "That didn't work. Check the user code and your internet connection."; return }
+        step = .waiting(qr)
+        pollTask?.cancel()
+        pollTask = Task { await poll() }
+    }
+
+    private func poll() async {
+        for _ in 0..<90 {
+            try? await Task.sleep(for: .seconds(2))
+            if Task.isCancelled { return }
+            let object = await RoomScript.call(["login-poll"], timeout: 20)
+            if object?["status"] as? String == "ok" {
+                if await !loadDevices() { error = "Signed in, but couldn't read your devices."; step = .code }
+                return
+            }
+        }
+        error = "Timed out waiting for the scan. Try again."
+        step = .code
+    }
+
+    @discardableResult
+    func loadDevices() async -> Bool {
+        busy = true
+        let object = await RoomScript.call(["discover"], timeout: 40)
+        busy = false
+        guard let list = object?["devices"] as? [[String: Any]] else { return false }
+        devices = list.compactMap { item in
+            guard let id = item["id"] as? String, let name = item["name"] as? String else { return nil }
+            return Found(id: id, name: name, product: item["product"] as? String ?? "", online: item["online"] as? Bool ?? false, added: item["added"] as? Bool ?? false)
+        }
+        step = .devices
+        return true
+    }
+
+    func add(_ device: Found, store: PlugStore) async {
+        error = nil
+        adding = device.id
+        let object = await RoomScript.call(["add-device", device.id], timeout: 90)
+        adding = nil
+        if object?["ok"] as? Bool == true {
+            if let index = devices.firstIndex(where: { $0.id == device.id }) { devices[index].added = true }
+            store.reload()
+        } else {
+            error = "Couldn't find \(device.name) on your network. Is it on, and is this Mac on the same Wi-Fi?"
+        }
+    }
+
+    func stop() { pollTask?.cancel() }
+}
+
+struct PlugSetupView: View {
+    @ObservedObject var store: PlugStore
+    let close: () -> Void
+    @StateObject private var model = PlugSetupModel()
+    @State private var code = ""
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Text("Add a plug").font(.system(size: 15, weight: .semibold, design: .rounded))
+                Spacer()
+                RoundKey(symbol: "xmark", size: 26, glyph: 11, label: "Close") { model.stop(); close() }
+            }
+            .padding(.top, 12)
+            switch model.step {
+            case .checking:
+                Spacer(); ProgressView(); Spacer()
+            case .code:
+                codeStep
+            case .waiting(let qr):
+                qrStep(qr)
+            case .devices:
+                deviceStep
+            }
+            if let error = model.error {
+                Text(error).font(.system(size: 12)).foregroundStyle(Theme.red).multilineTextAlignment(.center).frame(maxWidth: .infinity)
+            }
+        }
+        .padding(.bottom, 14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .task { await model.begin() }
+        .onDisappear { model.stop() }
+    }
+
+    private var codeStep: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Add your plugs in the Smart Life app first. Then, in Smart Life, open Me, the settings gear, Account and Security, User Code, and type the code here.")
+                .font(.system(size: 13)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+            TextField("User code", text: $code)
+                .textFieldStyle(.plain).font(.system(size: 15, design: .monospaced)).padding(.horizontal, 12).frame(height: 36)
+                .background(Capsule().fill(Theme.key))
+                .onSubmit { Task { await model.start(code: code) } }
+            Button { Task { await model.start(code: code) } } label: {
+                HStack { if model.busy { ProgressView().controlSize(.small) }; Text("Continue") }
+                    .font(.system(size: 13, weight: .semibold, design: .rounded)).frame(maxWidth: .infinity, minHeight: 32)
+            }
+            .buttonStyle(KeyStyle(shape: Capsule(), fill: Theme.accent, foreground: .white, hover: Theme.accent.opacity(0.9)))
+            .disabled(code.trimmed.isEmpty || model.busy)
+            Spacer()
+        }
+    }
+
+    private func qrStep(_ qr: String) -> some View {
+        VStack(spacing: 12) {
+            if let image = Self.qrImage(qr) {
+                Image(nsImage: image).interpolation(.none).resizable().frame(width: 190, height: 190)
+                    .padding(10).background(RoundedRectangle(cornerRadius: 10).fill(Color.white))
+            }
+            Text("In Smart Life, tap the scan icon at the top right of Home and scan this code. Approve the sign-in on your phone.")
+                .font(.system(size: 13)).foregroundStyle(Theme.secondary).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Waiting for the scan").font(.system(size: 12)).foregroundStyle(Theme.secondary) }
+            Spacer()
+        }
+    }
+
+    private var deviceStep: some View {
+        VStack(spacing: 8) {
+            Text("Pick the plugs to add. They need to be on and on this Wi-Fi.")
+                .font(.system(size: 12)).foregroundStyle(Theme.secondary).frame(maxWidth: .infinity, alignment: .leading)
+            if model.devices.isEmpty {
+                Spacer(); Text("No devices on this account").font(.system(size: 13)).foregroundStyle(Theme.secondary); Spacer()
+            } else {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(model.devices) { device in
+                            HStack(spacing: 10) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(device.name).font(.system(size: 14, weight: .medium))
+                                    Text(device.product).font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
+                                }
+                                Spacer(minLength: 6)
+                                if model.adding == device.id {
+                                    ProgressView().controlSize(.small)
+                                } else if device.added {
+                                    Label("Added", systemImage: "checkmark").font(.system(size: 12, weight: .medium)).foregroundStyle(Color(nsColor: .systemGreen))
+                                } else {
+                                    Button { Task { await model.add(device, store: store) } } label: {
+                                        Text("Add").font(.system(size: 12, weight: .semibold, design: .rounded)).padding(.horizontal, 14).frame(height: 26)
+                                    }
+                                    .buttonStyle(KeyStyle(shape: Capsule(), fill: Theme.keyFill, hover: Theme.strong))
+                                    .disabled(model.adding != nil)
+                                }
+                            }
+                            .padding(.vertical, 8)
+                            Divider().opacity(0.4)
+                        }
+                    }
+                }
+            }
+            Button { close() } label: {
+                Text("Done").font(.system(size: 13, weight: .semibold, design: .rounded)).frame(maxWidth: .infinity, minHeight: 32)
+            }
+            .buttonStyle(KeyStyle(shape: Capsule(), fill: Theme.keyFill, hover: Theme.strong))
+        }
+    }
+
+    static func qrImage(_ text: String) -> NSImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(text.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 8, y: 8)) else { return nil }
+        let rep = NSCIImageRep(ciImage: output)
+        let image = NSImage(size: rep.size)
+        image.addRepresentation(rep)
+        return image
+    }
+}
+
 struct PlugView: View {
     @Binding var device: PlugDevice
     let devices: [PlugDevice]
+    let onAdd: () -> Void
     @ObservedObject var model: PlugModel
     @State private var armed = false
     @State private var armedHold: Int?
@@ -1987,7 +2188,11 @@ struct PlugView: View {
             } else if showLog {
                 logView
             } else {
-                TimelineView(.periodic(from: .now, by: 30)) { context in clock(now: context.date) }
+                if model.cloud {
+                    TimelineView(.periodic(from: .now, by: 30)) { context in clock(now: context.date) }
+                } else {
+                    noCloud
+                }
                 holdRow
                 Spacer(minLength: 0)
                 footer
@@ -2003,6 +2208,8 @@ struct PlugView: View {
         HStack(spacing: 10) {
             Menu {
                 ForEach(devices) { item in Button(item.title) { device = item } }
+                Divider()
+                Button("Add a plug…") { onAdd() }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: device.symbol).font(.system(size: 13))
@@ -2032,6 +2239,19 @@ struct PlugView: View {
                 .accessibilityLabel(buttonTitle)
             }
         }
+    }
+
+    private var noCloud: some View {
+        VStack(spacing: 8) {
+            Spacer()
+            Image(systemName: "calendar.badge.clock").font(.system(size: 28, weight: .light)).foregroundStyle(Theme.secondary)
+            Text("Schedules need a Tuya developer key").font(.system(size: 14, weight: .semibold, design: .rounded))
+            Text("Switching, timed holds and the power-cut setting work now. The README shows how to unlock schedules and history.")
+                .font(.system(size: 12)).foregroundStyle(Theme.secondary).multilineTextAlignment(.center)
+            Spacer()
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 244)
     }
 
     // MARK: The 24 h clock
@@ -2205,15 +2425,19 @@ struct PlugView: View {
                 Text(error).font(.system(size: 12)).foregroundStyle(Theme.red).frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack(spacing: 8) {
-                Button { editing = TimerDraft() } label: {
-                    Label("Add schedule", systemImage: "plus").font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .frame(maxWidth: .infinity, minHeight: 30)
-                }
-                .buttonStyle(KeyStyle(shape: Capsule(), fill: Theme.keyFill, hover: Theme.strong))
-                .accessibilityLabel("Add schedule")
-                RoundKey(symbol: "list.bullet", size: 30, glyph: 12, label: "History") {
-                    showLog = true
-                    Task { await model.loadLog() }
+                if model.cloud {
+                    Button { editing = TimerDraft() } label: {
+                        Label("Add schedule", systemImage: "plus").font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .frame(maxWidth: .infinity, minHeight: 30)
+                    }
+                    .buttonStyle(KeyStyle(shape: Capsule(), fill: Theme.keyFill, hover: Theme.strong))
+                    .accessibilityLabel("Add schedule")
+                    RoundKey(symbol: "list.bullet", size: 30, glyph: 12, label: "History") {
+                        showLog = true
+                        Task { await model.loadLog() }
+                    }
+                } else {
+                    Spacer()
                 }
                 RoundKey(symbol: "arrow.clockwise", size: 30, glyph: 12, label: "Refresh") {
                     Task { await model.refresh(); await model.loadTimers() }
@@ -2352,7 +2576,7 @@ struct PlugView: View {
         var round = 0
         while !Task.isCancelled {
             await model.refresh()
-            if round % 3 == 0 && editing == nil { await model.loadTimers() }
+            if round % 3 == 0 && editing == nil && model.cloud { await model.loadTimers() }
             round += 1
             try? await Task.sleep(for: .seconds(20))
         }
@@ -2452,6 +2676,7 @@ struct RootView: View {
     @ObservedObject var model: RemoteModel
     @StateObject private var plugs = PlugStore()
     @State private var tab: RoomTab = .tv
+    @State private var showSetup = false
     @State private var plugID = UserDefaults.standard.string(forKey: "plugDevice") ?? ""
     @ObservedObject var assistant: AssistantModel
     @ObservedObject var surface: SurfaceModel
@@ -2479,11 +2704,14 @@ struct RootView: View {
                 bodyRegion.frame(height: 328).padding(.bottom, 12)
                 field.frame(height: 40).padding(.bottom, 16)
             case .plugs:
-                if plugs.devices.isEmpty {
+                if showSetup {
+                    PlugSetupView(store: plugs) { showSetup = false }
+                } else if plugs.devices.isEmpty {
                     noPlugs
                 } else {
                     let device = plugs.device(plugID)
-                    PlugView(device: Binding(get: { device }, set: { plugID = $0.id }), devices: plugs.devices, model: plugs.model(device.id)).id(device.id)
+                    PlugView(device: Binding(get: { device }, set: { plugID = $0.id }), devices: plugs.devices, onAdd: { showSetup = true },
+                             model: plugs.model(device.id)).id(device.id)
                 }
             }
         }
@@ -2517,7 +2745,12 @@ struct RootView: View {
             Spacer()
             Image(systemName: "powerplug").font(.system(size: 28, weight: .light)).foregroundStyle(Theme.secondary)
             Text("No plugs set up").font(.system(size: 15, weight: .semibold, design: .rounded))
-            Text("Add your Tuya plugs to room/devices.json.\nThe README has the steps.").font(.system(size: 12)).foregroundStyle(Theme.secondary).multilineTextAlignment(.center)
+            Text("Add the plugs from your Smart Life account.").font(.system(size: 12)).foregroundStyle(Theme.secondary).multilineTextAlignment(.center)
+            Button { showSetup = true } label: {
+                Text("Add a plug").font(.system(size: 13, weight: .semibold, design: .rounded)).padding(.horizontal, 18).frame(height: 32)
+            }
+            .buttonStyle(KeyStyle(shape: Capsule(), fill: Theme.accent, foreground: .white, hover: Theme.accent.opacity(0.9)))
+            .padding(.top, 6)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

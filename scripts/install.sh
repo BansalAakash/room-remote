@@ -40,6 +40,6 @@ cat <<MSG
 
 Done. Next:
   1. TV:    "$ROOT/tv/.venv/bin/python" "$ROOT/tv/pair.py" <your-tv-ip>
-  2. Plugs: see the README, section "Set up your plugs"
+  2. Plugs: open the app, Plugs tab, Add a plug
   3. Open:  open ~/Applications/RoomRemote.app   (it lives in the menu bar)
 MSG
