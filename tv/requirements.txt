@@ -1,0 +1,6 @@
+aiohttp
+androidtvremote2
+adb-shell
+pillow
+numpy
+cryptography

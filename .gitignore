@@ -1,0 +1,15 @@
+.DS_Store
+__pycache__/
+.venv/
+build/
+# Never commit these: they are your private keys and device secrets.
+*.pem
+adbkey
+adbkey.pub
+tv_ip.txt
+devices.json
+tinytuya.json
+tuya-raw.json
+snapshot.json
+wizard/
+*.log
