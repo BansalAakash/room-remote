@@ -2202,7 +2202,13 @@ struct PlugView: View {
                 logView
             } else {
                 if model.cloud {
-                    TimelineView(.periodic(from: .now, by: 30)) { context in clock(now: context.date) }
+                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                        VStack(spacing: 6) {
+                            clock(now: context.date)
+                            DayBar(segments: PlugSchedule.today(model.timers, now: context.date, inching: model.inching).segments,
+                                   selection: section, now: context.date, half: half) { handlePick($0, fromDot: false) }
+                        }
+                    }
                 } else {
                     noCloud
                 }
@@ -2286,6 +2292,14 @@ struct PlugView: View {
         .padding(2).background(Capsule().fill(Theme.key))
     }
 
+    /// A tap on the dial or the day bar: select the lit stretch under it, or start a new schedule on a dim spot.
+    private func handlePick(_ fraction: Double, fromDot: Bool) {
+        sectionArmed = false
+        guard fraction >= 0 else { section = nil; return }
+        section = PlugSchedule.section(at: fraction, timers: model.timers, now: Date(), inching: model.inching, litOnly: !fromDot)
+        if section == nil { editing = TimerDraft(roundedTo: fraction) }
+    }
+
     private func upcomingTitle(_ timer: PlugTimer) -> String {
         guard timer.on, model.inching > 0, let start = TimerDraft.format.date(from: timer.time) else {
             return "\(timer.on ? "On" : "Off") at \(TimerDraft.twelve(timer.time))"
@@ -2298,12 +2312,7 @@ struct PlugView: View {
         let upcoming = PlugSchedule.next(model.timers, after: now)
         return ZStack {
             DayClock(timers: model.timers, segments: day.segments, now: now, inching: model.inching, half: half, selection: section,
-                     pick: { fraction, fromDot in
-                         sectionArmed = false
-                         guard fraction >= 0 else { section = nil; return }
-                         section = PlugSchedule.section(at: fraction, timers: model.timers, now: Date(), inching: model.inching, litOnly: !fromDot)
-                         if section == nil { editing = TimerDraft(roundedTo: fraction) }  // a dim stretch: start a new schedule there
-                     })
+                     pick: { fraction, fromDot in handlePick(fraction, fromDot: fromDot) })
             VStack(spacing: 10) {
             VStack(spacing: 3) {
                 if model.countdown > 0 && model.on != nil {
@@ -2321,7 +2330,7 @@ struct PlugView: View {
                 halfPicker
             }
         }
-        .frame(height: 244)
+        .frame(height: 216)
     }
 
     // MARK: Hold for a while
@@ -2662,7 +2671,7 @@ struct DayClock: View {
     private func clip(_ from: Double, _ to: Double) -> (from: Double, to: Double, start: Bool, end: Bool)? {
         let a = max(from, low), b = min(to, low + 0.5)
         guard b > a else { return nil }
-        return ((a - low) * 2, (b - low) * 2, from >= low, to <= low + 0.5)
+        return ((a - low) * 2, (b - low) * 2, true, true)  // every end is rounded, including where a stretch carries on into the other half
     }
 
     private func point(_ fraction: Double, radius: Double, center: CGPoint) -> CGPoint {
@@ -2713,18 +2722,7 @@ struct DayClock: View {
                     }
                     .stroke(Color.primary, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                 }
-                // A plug with an auto-off shows only its lit stretches: tap one to edit or delete it.
-                ForEach(inching > 0 ? [] : timers.filter { fraction($0.time) >= low && fraction($0.time) < low + 0.5 }) { timer in
-                    Button { pick(fraction(timer.time) + 0.0002, true) } label: {
-                        Circle().fill(timer.enabled ? (timer.on ? Color(nsColor: .systemGreen) : Theme.red) : Theme.grey)
-                            .frame(width: 16, height: 16)
-                            .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 2))
-                            .frame(width: 28, height: 28).contentShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .position(point((fraction(timer.time) - low) * 2, radius: radius, center: center))
-                    .accessibilityLabel("\(timer.time) turn \(timer.on ? "on" : "off")")
-                }
+                // No dots: tap a lit stretch to edit or delete it, or a dim spot to add a schedule.
             }
             .contentShape(Rectangle())
             .onTapGesture(coordinateSpace: .local) { location in
@@ -2736,6 +2734,49 @@ struct DayClock: View {
                 pick(low + turn / 2, false)
             }
         }
+    }
+}
+
+/// The whole day as one thin bar (midnight at the left): lit while the plug is on. The outlined half is what the dial shows.
+struct DayBar: View {
+    let segments: [PlugSchedule.Segment]
+    let selection: PlugSection?
+    let now: Date
+    let half: Int
+    let pick: (Double) -> Void
+
+    var body: some View {
+        let nowDay = (Double(Calendar.current.component(.hour, from: now)) * 60 + Double(Calendar.current.component(.minute, from: now))) / 1440
+        VStack(spacing: 2) {
+            GeometryReader { proxy in
+                let width = proxy.size.width
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Theme.key).frame(height: 10)
+                    ForEach(Array((selection?.arcs ?? []).enumerated()), id: \.offset) { _, arc in
+                        RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.28))
+                            .frame(width: max(6, (arc.1 - arc.0) * width + 4), height: 16).offset(x: arc.0 * width - 2)
+                    }
+                    ForEach(Array(segments.filter(\.on).enumerated()), id: \.offset) { _, segment in
+                        RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: .systemGreen).opacity(0.85))
+                            .frame(width: max(4, (segment.to - segment.from) * width), height: 10).offset(x: segment.from * width)
+                    }
+                    RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.4), lineWidth: 1)
+                        .frame(width: width / 2, height: 16).offset(x: Double(half) * width / 2)
+                    Rectangle().fill(Color.primary).frame(width: 2, height: 16).offset(x: width * nowDay - 1)
+                }
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onTapGesture(coordinateSpace: .local) { location in pick(min(max(location.x / width, 0), 0.9999)) }
+            }
+            .frame(height: 18)
+            HStack {
+                ForEach(Array(["12a", "6a", "12p", "6p", "12a"].enumerated()), id: \.offset) { index, mark in
+                    Text(mark).font(.system(size: 10)).foregroundStyle(Theme.secondary)
+                    if index < 4 { Spacer() }
+                }
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 
