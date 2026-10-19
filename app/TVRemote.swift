@@ -1912,7 +1912,8 @@ enum PlugSchedule {
             let length = Double(inching) / 86400
             for event in events where event.on {
                 let from = Double(minutes(event)!) / 1440
-                if (fraction - from + 1).truncatingRemainder(dividingBy: 1) < length {
+                let margin = 0.008  // a little slack either side (about 12 minutes), since a 30-minute stretch is a small target
+                if (fraction - from + 1 + margin).truncatingRemainder(dividingBy: 1) < length + 2 * margin {
                     return PlugSection(start: event, end: event, from: from, to: (from + length).truncatingRemainder(dividingBy: 1))
                 }
             }
@@ -2662,16 +2663,8 @@ struct DayClock: View {
                     path.addLine(to: point(nowFraction, radius: radius + 11, center: center))
                 }
                 .stroke(Color.primary, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                // A plug with an auto-off (inching) ends each stretch by itself: mark where, with a red dot.
-                if inching > 0 {
-                    ForEach(timers.filter(\.on)) { timer in
-                        dot(Theme.red.opacity(timer.enabled ? 1 : 0.4), size: 12)
-                            .position(point(fraction(timer.time) + Double(inching) / 86400, radius: radius, center: center))
-                            .onTapGesture { pick(fraction(timer.time) + 0.0002, true) }
-                            .accessibilityLabel("\(timer.time) plus \(inching / 60) minutes, turns off")
-                    }
-                }
-                ForEach(timers) { timer in
+                // A plug with an auto-off shows only its lit stretches: tap one to edit or delete it.
+                ForEach(inching > 0 ? [] : timers) { timer in
                     Button { pick(fraction(timer.time) + 0.0002, true) } label: {
                         dot(timer.enabled ? (timer.on ? Color(nsColor: .systemGreen) : Theme.red) : Theme.grey, size: inching > 0 ? 12 : 16)
                             .frame(width: 28, height: 28).contentShape(Circle())
