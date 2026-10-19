@@ -1964,6 +1964,13 @@ struct TimerDraft {
         return formatter
     }()
     static func date(_ text: String) -> Date { format.date(from: text) ?? Date() }
+    /// "18:30" as "6:30 PM", to match the 12 h dial.
+    static func twelve(_ text: String) -> String {
+        guard let date = format.date(from: text) else { return text }
+        let display = DateFormatter()
+        display.dateFormat = "h:mm a"
+        return display.string(from: date)
+    }
     var timeText: String { Self.format.string(from: time) }
     var loops: String { days.map { $0 ? "1" : "0" }.joined() }
 }
@@ -2176,6 +2183,7 @@ struct PlugView: View {
     @State private var section: PlugSection?
     @State private var showLog = false
     @State private var confirmRemove = false
+    @State private var half = Calendar.current.component(.hour, from: Date()) >= 12 ? 1 : 0
     @State private var sectionArmed = false
 
     private static let holds = [(label: "30 min", seconds: 1800), (label: "1 h", seconds: 3600), (label: "2 h", seconds: 7200), (label: "4 h", seconds: 14400)]
@@ -2262,24 +2270,41 @@ struct PlugView: View {
 
     // MARK: The 24 h clock
 
+    private var halfPicker: some View {
+        HStack(spacing: 2) {
+            ForEach(["AM", "PM"].indices, id: \.self) { index in
+                Button { half = index } label: {
+                    Text(index == 0 ? "AM" : "PM").font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .frame(width: 34, height: 22)
+                        .background(Capsule().fill(half == index ? Theme.strong : Color.clear))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(index == 0 ? "Morning" : "Afternoon and evening")
+            }
+        }
+        .padding(2).background(Capsule().fill(Theme.key))
+    }
+
     private func upcomingTitle(_ timer: PlugTimer) -> String {
         guard timer.on, model.inching > 0, let start = TimerDraft.format.date(from: timer.time) else {
-            return "\(timer.on ? "On" : "Off") at \(timer.time)"
+            return "\(timer.on ? "On" : "Off") at \(TimerDraft.twelve(timer.time))"
         }
-        return "On \(timer.time) to \(TimerDraft.format.string(from: start.addingTimeInterval(Double(model.inching))))"
+        return "On \(TimerDraft.twelve(timer.time)) to \(TimerDraft.twelve(TimerDraft.format.string(from: start.addingTimeInterval(Double(model.inching)))))"
     }
 
     private func clock(now: Date) -> some View {
         let day = PlugSchedule.today(model.timers, now: now, inching: model.inching)
         let upcoming = PlugSchedule.next(model.timers, after: now)
         return ZStack {
-            DayClock(timers: model.timers, segments: day.segments, now: now, inching: model.inching, selection: section,
+            DayClock(timers: model.timers, segments: day.segments, now: now, inching: model.inching, half: half, selection: section,
                      pick: { fraction, fromDot in
                          sectionArmed = false
                          guard fraction >= 0 else { section = nil; return }
                          section = PlugSchedule.section(at: fraction, timers: model.timers, now: Date(), inching: model.inching, litOnly: !fromDot)
                          if section == nil { editing = TimerDraft(roundedTo: fraction) }  // a dim stretch: start a new schedule there
                      })
+            VStack(spacing: 10) {
             VStack(spacing: 3) {
                 if model.countdown > 0 && model.on != nil {
                     let left = max(60, Double(model.countdown) - now.timeIntervalSince(model.countdownRead))
@@ -2293,6 +2318,8 @@ struct PlugView: View {
                 }
             }
             .allowsHitTesting(false)
+                halfPicker
+            }
         }
         .frame(height: 244)
     }
@@ -2331,7 +2358,7 @@ struct PlugView: View {
     private func sectionRow(_ section: PlugSection) -> some View {
         let both = section.start.group != section.end.group
         return VStack(spacing: 8) {
-            Text("\(section.start.time) to \(endText(section))").font(.system(size: 14, weight: .medium))
+            Text("\(TimerDraft.twelve(section.start.time)) to \(TimerDraft.twelve(endText(section)))").font(.system(size: 14, weight: .medium))
             HStack(spacing: 8) {
                 Button { self.section = nil; sectionArmed = false } label: {
                     Text("Cancel").font(.system(size: 13, weight: .semibold, design: .rounded)).frame(maxWidth: .infinity, minHeight: 30)
@@ -2613,23 +2640,29 @@ struct PlugView: View {
     }
 }
 
-/// Today as a 24 h dial, midnight at the top: lit green while the plug is on, dim while off. Each schedule is a dot to tap.
+/// Today as a 12 h dial (12 at the top): lit green while the plug is on, dim while off. `half` is 0 for AM, 1 for PM.
+/// Each schedule of a plug that switches both ways is a dot to tap; stretches have rounded ends where they truly begin and end.
 struct DayClock: View {
     let timers: [PlugTimer]
     let segments: [PlugSchedule.Segment]
     let now: Date
     let inching: Int
+    let half: Int
     let selection: PlugSection?
     let pick: (Double, Bool) -> Void
+
+    private var low: Double { Double(half) * 0.5 }
 
     private func fraction(_ time: String) -> Double {
         let parts = time.split(separator: ":").compactMap { Double($0) }
         return parts.count == 2 ? (parts[0] * 60 + parts[1]) / 1440 : 0
     }
 
-    private func dot(_ color: Color, size: CGFloat) -> some View {
-        Circle().fill(color).frame(width: size, height: size)
-            .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 2))
+    /// A stretch of the day cut to this half and rescaled to 0...1 around the dial; the flags say whether its true start / end is in view.
+    private func clip(_ from: Double, _ to: Double) -> (from: Double, to: Double, start: Bool, end: Bool)? {
+        let a = max(from, low), b = min(to, low + 0.5)
+        guard b > a else { return nil }
+        return ((a - low) * 2, (b - low) * 2, from >= low, to <= low + 0.5)
     }
 
     private func point(_ fraction: Double, radius: Double, center: CGPoint) -> CGPoint {
@@ -2637,40 +2670,59 @@ struct DayClock: View {
         return CGPoint(x: center.x + radius * cos(angle), y: center.y + radius * sin(angle))
     }
 
+    private func arc(_ part: (from: Double, to: Double, start: Bool, end: Bool), width: CGFloat, color: Color, radius: Double, center: CGPoint) -> some View {
+        let cap = Double(width / 2) / (2 * .pi * radius)
+        let a = part.start ? part.from + cap : part.from, b = part.end ? part.to - cap : part.to
+        return ZStack {
+            if b > a {
+                Circle().trim(from: a, to: b).stroke(color, style: StrokeStyle(lineWidth: width, lineCap: .butt))
+                    .rotationEffect(.degrees(-90)).frame(width: radius * 2, height: radius * 2).position(center)
+            }
+            if part.start { Circle().fill(color).frame(width: width, height: width).position(point(min(a, b), radius: radius, center: center)) }
+            if part.end { Circle().fill(color).frame(width: width, height: width).position(point(max(a, b), radius: radius, center: center)) }
+        }
+    }
+
     var body: some View {
         GeometryReader { proxy in
             let center = CGPoint(x: proxy.size.width / 2, y: proxy.size.height / 2)
             let radius = min(proxy.size.width, proxy.size.height) / 2 - 20
-            let nowFraction = (Double(Calendar.current.component(.hour, from: now)) * 60 + Double(Calendar.current.component(.minute, from: now))) / 1440
+            let nowDay = (Double(Calendar.current.component(.hour, from: now)) * 60 + Double(Calendar.current.component(.minute, from: now))) / 1440
             ZStack {
                 Circle().stroke(Theme.key, lineWidth: 14).frame(width: radius * 2, height: radius * 2).position(center)
-                ForEach(Array((selection?.arcs ?? []).enumerated()), id: \.offset) { _, arc in
-                    Circle().trim(from: arc.0, to: arc.1)
-                        .stroke(Color.primary.opacity(0.28), style: StrokeStyle(lineWidth: 22, lineCap: .butt))
-                        .rotationEffect(.degrees(-90)).frame(width: radius * 2, height: radius * 2).position(center)
+                ZStack {  // drawn solid, then softened as one group so overlapping caps don't show
+                    ForEach(Array((selection?.arcs ?? []).compactMap { clip($0.0, $0.1) }.enumerated()), id: \.offset) { _, part in
+                        arc(part, width: 22, color: Color.primary, radius: radius, center: center)
+                    }
                 }
-                ForEach(Array(segments.filter(\.on).enumerated()), id: \.offset) { _, segment in
-                    Circle().trim(from: segment.from, to: segment.to)
-                        .stroke(Color(nsColor: .systemGreen).opacity(0.85), style: StrokeStyle(lineWidth: 14, lineCap: .butt))
-                        .rotationEffect(.degrees(-90)).frame(width: radius * 2, height: radius * 2).position(center)
+                .compositingGroup().opacity(0.28)
+                ZStack {
+                    ForEach(Array(segments.filter(\.on).compactMap { clip($0.from, $0.to) }.enumerated()), id: \.offset) { _, part in
+                        arc(part, width: 14, color: Color(nsColor: .systemGreen), radius: radius, center: center)
+                    }
                 }
+                .compositingGroup().opacity(0.85)
                 ForEach(0..<12, id: \.self) { index in
-                    Text("\(index * 2)").font(.system(size: 10)).foregroundStyle(Theme.secondary)
+                    Text(index == 0 ? "12" : "\(index)").font(.system(size: 11)).foregroundStyle(Theme.secondary)
                         .position(point(Double(index) / 12, radius: radius + 18, center: center))
                 }
-                Path { path in
-                    path.move(to: point(nowFraction, radius: radius - 11, center: center))
-                    path.addLine(to: point(nowFraction, radius: radius + 11, center: center))
+                if nowDay >= low && nowDay < low + 0.5 {
+                    Path { path in
+                        path.move(to: point((nowDay - low) * 2, radius: radius - 11, center: center))
+                        path.addLine(to: point((nowDay - low) * 2, radius: radius + 11, center: center))
+                    }
+                    .stroke(Color.primary, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                 }
-                .stroke(Color.primary, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                 // A plug with an auto-off shows only its lit stretches: tap one to edit or delete it.
-                ForEach(inching > 0 ? [] : timers) { timer in
+                ForEach(inching > 0 ? [] : timers.filter { fraction($0.time) >= low && fraction($0.time) < low + 0.5 }) { timer in
                     Button { pick(fraction(timer.time) + 0.0002, true) } label: {
-                        dot(timer.enabled ? (timer.on ? Color(nsColor: .systemGreen) : Theme.red) : Theme.grey, size: inching > 0 ? 12 : 16)
+                        Circle().fill(timer.enabled ? (timer.on ? Color(nsColor: .systemGreen) : Theme.red) : Theme.grey)
+                            .frame(width: 16, height: 16)
+                            .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 2))
                             .frame(width: 28, height: 28).contentShape(Circle())
                     }
                     .buttonStyle(.plain)
-                    .position(point(fraction(timer.time), radius: radius, center: center))
+                    .position(point((fraction(timer.time) - low) * 2, radius: radius, center: center))
                     .accessibilityLabel("\(timer.time) turn \(timer.on ? "on" : "off")")
                 }
             }
@@ -2678,9 +2730,10 @@ struct DayClock: View {
             .onTapGesture(coordinateSpace: .local) { location in
                 let dx = location.x - center.x, dy = location.y - center.y
                 guard abs(hypot(dx, dy) - radius) < 24 else { pick(-1, false); return }
-                var angle = atan2(dy, dx) + .pi / 2
-                if angle < 0 { angle += 2 * .pi }
-                pick(angle / (2 * .pi), false)
+                var angle = Double(atan2(dy, dx)) + Double.pi / 2
+                if angle < 0 { angle += 2 * Double.pi }
+                let turn: Double = angle / (2 * Double.pi)
+                pick(low + turn / 2, false)
             }
         }
     }
