@@ -13,9 +13,9 @@ See also: [minimal-tv-launcher](https://github.com/BansalAakash/minimal-tv-launc
 
 ## Use it with an AI assistant
 
-Hand this repo to any AI assistant that can run commands on your Mac and it can install and set everything up for you. Paste:
+Hand this repo to any AI assistant that can run commands on your Mac and it can install and set everything up for you. Your Mac and the TV just need to be on the same Wi-Fi: the assistant finds the TV itself. Paste:
 
-> Set up Room Remote on my Mac. First read https://raw.githubusercontent.com/BansalAakash/room-remote/main/AGENTS.md and follow it. Ask me for the TV's IP address and tell me when I need to do something on the TV or in the Smart Life app.
+> Set up Room Remote on my Mac. First read https://raw.githubusercontent.com/BansalAakash/room-remote/main/AGENTS.md and follow it. Tell me when I need to do something on the TV or in the Smart Life app.
 
 [`AGENTS.md`](AGENTS.md) has everything it needs: what to run, what only you can do, how to check each step, and how to fix common problems.
 
