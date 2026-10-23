@@ -9,11 +9,7 @@ A macOS menu bar app that controls the devices in your room: your Android TV / M
 
 Requires macOS 14 or later.
 
-## Pairs with Room Home
-
-Room Remote controls your TV from the Mac. [**Room Home**](https://github.com/BansalAakash/room-home) is the matching home screen for the TV itself: a calm launcher with a lamp, a sun and moon on India time, and a console that wakes the TV and jumps to it.
-
-[![Room Home: the spider pulls the lamp cord and the room goes dark](https://raw.githubusercontent.com/BansalAakash/room-home/main/docs/lamp-animation.gif)](https://github.com/BansalAakash/room-home)
+See also: [minimal-tv-launcher](https://github.com/BansalAakash/minimal-tv-launcher), a separate project: a custom home screen for the TV itself.
 
 ## Use it with an AI assistant
 
