@@ -9,6 +9,20 @@ A macOS menu bar app that controls the devices in your room: your Android TV / M
 
 Requires macOS 14 or later.
 
+## Pairs with Room Home
+
+Room Remote controls your TV from the Mac. [**Room Home**](https://github.com/BansalAakash/room-home) is the matching home screen for the TV itself: a calm launcher with a lamp, a sun and moon on India time, and a console that wakes the TV and jumps to it.
+
+[![Room Home: the spider pulls the lamp cord and the room goes dark](https://raw.githubusercontent.com/BansalAakash/room-home/main/docs/lamp-animation.gif)](https://github.com/BansalAakash/room-home)
+
+## Use it with an AI assistant
+
+Hand this repo to any AI assistant that can run commands on your Mac and it can install and set everything up for you. Paste:
+
+> Set up Room Remote on my Mac. First read https://raw.githubusercontent.com/BansalAakash/room-remote/main/AGENTS.md and follow it. Ask me for the TV's IP address and tell me when I need to do something on the TV or in the Smart Life app.
+
+[`AGENTS.md`](AGENTS.md) has everything it needs: what to run, what only you can do, how to check each step, and how to fix common problems.
+
 ## Install
 
 1. Download `RoomRemote-<version>.zip` from the [Releases](../../releases) page (or from the [`releases/`](releases) folder) and unzip it.
